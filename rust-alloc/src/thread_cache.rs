@@ -23,7 +23,7 @@ impl ThreadCache {
         }
     }
     /// Put in any usize, does the modulo-getting
-    unsafe fn get_thread_cache<'a>(&'a self, id: usize) -> &'a mut Bins {
+    unsafe fn get_thread_cache(&self, id: usize) -> &Bins {
         let bins_slice = self.bins.get_or_init(init_bins);
         let hashed = hash_usize(id);
         let offset = (hashed % bins_slice.len) as isize;
@@ -43,7 +43,7 @@ fn hash_usize(input: usize) -> usize {
 
 #[cfg(unix)]
 pub(crate) fn thread_id() -> usize {
-    unsafe { libc::pthread_self() }
+    unsafe { libc::pthread_self() as usize }
 }
 
 #[cfg(windows)]
@@ -62,7 +62,7 @@ fn init_bins() -> BinsSlice {
             .unwrap(),
         ) as *mut Bins;
         for i in 0..num_bins {
-            ptr::write(buf.offset(i as isize), Bins::new());
+            ptr::write(buf.add(i), Bins::new());
         }
         BinsSlice {
             ptr: buf,
@@ -79,21 +79,21 @@ unsafe impl GlobalAlloc for RSBMalloc {
         let bins = self.thread_cache.get_thread_cache(thread_id());
         let size = layout.pad_to_align().size();
         match size {
-            ..=4 => bins.bin4.alloc(),
-            ..=8 => bins.bin8.alloc(),
-            ..=16 => bins.bin16.alloc(),
-            ..=32 => bins.bin32.alloc(),
-            ..=64 => bins.bin64.alloc(),
-            ..=128 => bins.bin128.alloc(),
-            ..=256 => bins.bin256.alloc(),
-            ..=512 => bins.bin512.alloc(),
-            ..=1024 => bins.bin1024.alloc(),
-            ..=2048 => bins.bin2048.alloc(),
-            ..=4096 => bins.bin4096.alloc(),
-            ..=8192 => bins.bin8192.alloc(),
-            ..=16384 => bins.bin16384.alloc(),
-            ..=0x8000 => bins.bin32ki.alloc(),
-            ..=0x10000 => bins.bin64ki.alloc(),
+            0..=4 => bins.bin4.alloc(),
+            5..=8 => bins.bin8.alloc(),
+            9..=16 => bins.bin16.alloc(),
+            17..=32 => bins.bin32.alloc(),
+            33..=64 => bins.bin64.alloc(),
+            65..=128 => bins.bin128.alloc(),
+            129..=256 => bins.bin256.alloc(),
+            257..=512 => bins.bin512.alloc(),
+            513..=1024 => bins.bin1024.alloc(),
+            1025..=2048 => bins.bin2048.alloc(),
+            2049..=4096 => bins.bin4096.alloc(),
+            4097..=8192 => bins.bin8192.alloc(),
+            8193..=16384 => bins.bin16384.alloc(),
+            16385..=0x8000 => bins.bin32ki.alloc(),
+            0x8001..=0x10000 => bins.bin64ki.alloc(),
             _ => PAGE_ALLOCATOR.alloc(layout),
         }
     }
@@ -101,21 +101,21 @@ unsafe impl GlobalAlloc for RSBMalloc {
         let bins = self.thread_cache.get_thread_cache(thread_id());
         let size = layout.pad_to_align().size();
         match size {
-            ..=4 => bins.bin4.dealloc(ptr),
-            ..=8 => bins.bin8.dealloc(ptr),
-            ..=16 => bins.bin16.dealloc(ptr),
-            ..=32 => bins.bin32.dealloc(ptr),
-            ..=64 => bins.bin64.dealloc(ptr),
-            ..=128 => bins.bin128.dealloc(ptr),
-            ..=256 => bins.bin256.dealloc(ptr),
-            ..=512 => bins.bin512.dealloc(ptr),
-            ..=1024 => bins.bin1024.dealloc(ptr),
-            ..=2048 => bins.bin2048.dealloc(ptr),
-            ..=4096 => bins.bin4096.dealloc(ptr),
-            ..=8192 => bins.bin8192.dealloc(ptr),
-            ..=16384 => bins.bin16384.dealloc(ptr),
-            ..=0x8000 => bins.bin32ki.dealloc(ptr),
-            ..=0x10000 => bins.bin64ki.dealloc(ptr),
+            0..=4 => bins.bin4.dealloc(ptr),
+            5..=8 => bins.bin8.dealloc(ptr),
+            9..=16 => bins.bin16.dealloc(ptr),
+            17..=32 => bins.bin32.dealloc(ptr),
+            33..=64 => bins.bin64.dealloc(ptr),
+            65..=128 => bins.bin128.dealloc(ptr),
+            129..=256 => bins.bin256.dealloc(ptr),
+            257..=512 => bins.bin512.dealloc(ptr),
+            513..=1024 => bins.bin1024.dealloc(ptr),
+            1025..=2048 => bins.bin2048.dealloc(ptr),
+            2049..=4096 => bins.bin4096.dealloc(ptr),
+            4097..=8192 => bins.bin8192.dealloc(ptr),
+            8193..=16384 => bins.bin16384.dealloc(ptr),
+            16385..=0x8000 => bins.bin32ki.dealloc(ptr),
+            0x8001..=0x10000 => bins.bin64ki.dealloc(ptr),
             _ => PAGE_ALLOCATOR.dealloc(ptr, layout),
         }
     }

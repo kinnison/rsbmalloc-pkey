@@ -11,12 +11,12 @@ use core::{
 
 use page_allocator::PAGE_ALLOCATOR;
 use spin::Mutex;
-#[cfg(feature = "std")]
-use thread_cache::ThreadCache;
+//#[cfg(feature = "std")]
+//use thread_cache::ThreadCache;
 
 pub mod page_allocator;
-#[cfg(feature = "std")]
-mod thread_cache;
+//#[cfg(feature = "std")]
+//mod thread_cache;
 
 #[cfg(test)]
 #[cfg_attr(test, global_allocator)]
@@ -26,73 +26,75 @@ const RSB_CHUNK_SIZE: usize = 0x10000;
 const MAX_ALIGN: usize = 0x1000;
 
 pub struct RSBMalloc {
-    #[cfg(not(feature = "std"))]
+    //#[cfg(not(feature = "std"))]
     bins: Bins,
-    #[cfg(feature = "std")]
-    thread_cache: ThreadCache,
+    //#[cfg(feature = "std")]
+    //thread_cache: ThreadCache,
 }
 
 impl RSBMalloc {
     pub const fn new() -> Self {
         Self {
-            #[cfg(not(feature = "std"))]
+            //#[cfg(not(feature = "std"))]
             bins: Bins::new(),
-            #[cfg(feature = "std")]
-            thread_cache: ThreadCache::new(),
+            //#[cfg(feature = "std")]
+            //thread_cache: ThreadCache::new(),
         }
     }
 }
 
-#[cfg(not(feature = "std"))]
+//#[cfg(not(feature = "std"))]
 unsafe impl GlobalAlloc for RSBMalloc {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
         if layout.align() > MAX_ALIGN {
-            return ptr::null_mut();
+            return core::ptr::null_mut();
         }
         let size = layout.pad_to_align().size();
+        let bins = &self.bins;
         match size {
-            ..=4 => self.bins.bin4.alloc(),
-            ..=8 => self.bins.bin8.alloc(),
-            ..=16 => self.bins.bin16.alloc(),
-            ..=32 => self.bins.bin32.alloc(),
-            ..=64 => self.bins.bin64.alloc(),
-            ..=128 => self.bins.bin128.alloc(),
-            ..=256 => self.bins.bin256.alloc(),
-            ..=512 => self.bins.bin512.alloc(),
-            ..=1024 => self.bins.bin1024.alloc(),
-            ..=2048 => self.bins.bin2048.alloc(),
-            ..=4096 => self.bins.bin4096.alloc(),
-            ..=8192 => self.bins.bin8192.alloc(),
-            ..=16384 => self.bins.bin16384.alloc(),
-            ..=0x8000 => self.bins.bin32ki.alloc(),
-            ..=0x10000 => self.bins.bin64ki.alloc(),
+            0..=4 => bins.bin4.alloc(),
+            5..=8 => bins.bin8.alloc(),
+            9..=16 => bins.bin16.alloc(),
+            17..=32 => bins.bin32.alloc(),
+            33..=64 => bins.bin64.alloc(),
+            65..=128 => bins.bin128.alloc(),
+            129..=256 => bins.bin256.alloc(),
+            257..=512 => bins.bin512.alloc(),
+            513..=1024 => bins.bin1024.alloc(),
+            1025..=2048 => bins.bin2048.alloc(),
+            2049..=4096 => bins.bin4096.alloc(),
+            4097..=8192 => bins.bin8192.alloc(),
+            8193..=16384 => bins.bin16384.alloc(),
+            16385..=0x8000 => bins.bin32ki.alloc(),
+            0x8001..=0x10000 => bins.bin64ki.alloc(),
             _ => PAGE_ALLOCATOR.alloc(layout),
         }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
         let size = layout.pad_to_align().size();
+        let bins = &self.bins;
         match size {
-            ..=4 => self.bins.bin4.dealloc(ptr),
-            ..=8 => self.bins.bin8.dealloc(ptr),
-            ..=16 => self.bins.bin16.dealloc(ptr),
-            ..=32 => self.bins.bin32.dealloc(ptr),
-            ..=64 => self.bins.bin64.dealloc(ptr),
-            ..=128 => self.bins.bin128.dealloc(ptr),
-            ..=256 => self.bins.bin256.dealloc(ptr),
-            ..=512 => self.bins.bin512.dealloc(ptr),
-            ..=1024 => self.bins.bin1024.dealloc(ptr),
-            ..=2048 => self.bins.bin2048.dealloc(ptr),
-            ..=4096 => self.bins.bin4096.dealloc(ptr),
-            ..=8192 => self.bins.bin8192.dealloc(ptr),
-            ..=16384 => self.bins.bin16384.dealloc(ptr),
-            ..=0x8000 => self.bins.bin32ki.dealloc(ptr),
-            ..=0x10000 => self.bins.bin64ki.dealloc(ptr),
+            0..=4 => bins.bin4.dealloc(ptr),
+            5..=8 => bins.bin8.dealloc(ptr),
+            9..=16 => bins.bin16.dealloc(ptr),
+            17..=32 => bins.bin32.dealloc(ptr),
+            33..=64 => bins.bin64.dealloc(ptr),
+            65..=128 => bins.bin128.dealloc(ptr),
+            129..=256 => bins.bin256.dealloc(ptr),
+            257..=512 => bins.bin512.dealloc(ptr),
+            513..=1024 => bins.bin1024.dealloc(ptr),
+            1025..=2048 => bins.bin2048.dealloc(ptr),
+            2049..=4096 => bins.bin4096.dealloc(ptr),
+            4097..=8192 => bins.bin8192.dealloc(ptr),
+            8193..=16384 => bins.bin16384.dealloc(ptr),
+            16385..=0x8000 => bins.bin32ki.dealloc(ptr),
+            0x8001..=0x10000 => bins.bin64ki.dealloc(ptr),
             _ => PAGE_ALLOCATOR.dealloc(ptr, layout),
         }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         if layout.align() > MAX_ALIGN {
-            return ptr::null_mut();
+            return core::ptr::null_mut();
         }
         if layout.pad_to_align().size() > RSB_CHUNK_SIZE
             && Layout::from_size_align_unchecked(new_size, layout.align())
@@ -286,15 +288,13 @@ impl<S: Slot> Bin<S> {
     fn add_one(&self) -> *mut S {
         let slot_size = mem::size_of::<S>();
         let mut page = self.page.lock();
-        if !page.ptr.is_null() {
-            if page.len >= slot_size {
-                let ret = page.ptr as *mut S;
-                unsafe {
-                    page.ptr = page.ptr.add(slot_size);
-                    page.len -= slot_size;
-                }
-                return ret;
+        if !page.ptr.is_null() && page.len >= slot_size {
+            let ret = page.ptr as *mut S;
+            unsafe {
+                page.ptr = page.ptr.add(slot_size);
+                page.len -= slot_size;
             }
+            return ret;
         }
         unsafe {
             let ptr = PAGE_ALLOCATOR.alloc(Layout::from_size_align_unchecked(
@@ -347,6 +347,7 @@ mod test {
         alloc::{GlobalAlloc, Layout},
         hint::black_box,
         mem,
+        ptr::null_mut,
     };
 
     use std::{panic::catch_unwind, vec, vec::Vec};
@@ -393,28 +394,28 @@ mod test {
         // Free the memory
         allocator.dealloc(ptr, Layout::new::<u64>());
 
-        let mut ptr_buf: [*mut u8; 256] = [0 as *mut u8; 256];
+        let mut ptr_buf: [*mut u8; 256] = [null_mut(); 256];
 
-        for i in 0..256 {
+        for ptr in ptr_buf.iter_mut() {
             let pointer = allocator.alloc(Layout::new::<Big>());
             assert!(!pointer.is_null());
             let _ = std::ptr::read(pointer as *const Big);
-            ptr_buf[i] = pointer;
+            *ptr = pointer;
         }
 
-        for i in 0..128 {
-            allocator.dealloc(ptr_buf[i], Layout::new::<Big>());
+        for ptr in ptr_buf.iter() {
+            allocator.dealloc(*ptr, Layout::new::<Big>());
         }
 
-        for i in 0..128 {
+        for ptr in ptr_buf.iter_mut() {
             let pointer = allocator.alloc(Layout::new::<Big>());
             assert!(!pointer.is_null());
             let _ = std::ptr::read(pointer as *const Big);
-            ptr_buf[i] = pointer;
+            *ptr = pointer;
         }
 
-        for i in 0..256 {
-            allocator.dealloc(ptr_buf[i], Layout::new::<Big>());
+        for ptr in ptr_buf.iter() {
+            allocator.dealloc(*ptr, Layout::new::<Big>());
         }
     }
 

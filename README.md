@@ -1,3 +1,13 @@
+# NOTE
+
+This is an experimental repo which represents a patched rsbmalloc which plays with pkeys
+as an underlying protection mechanic.  It also doesn't provide a `GlobalAllocator` implementation
+despite the below, instead relying on the **unstable** `allocator_api` feature.
+
+The intention is to experiment with pkeys in container allocation for security reasons.
+
+The below is the original README
+
 # rsbmalloc
 
 A binned allocator for Rust. It’s quite simple, but reasonably fast single and multi-threaded. Single-threaded, it generally similar to the built-in allocator, sometimes faster, but sometimes with higher memory usage. Multi-threaded, it ranges from similar speed to quite a bit slower. It’s pure Rust, so it should work smoothly on any platform that provides standard `mmap` and `munmap` functions, and also Windows (though Windows support isn’t tested).
