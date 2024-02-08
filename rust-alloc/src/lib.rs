@@ -155,13 +155,21 @@ mod test {
     fn basic_labelled_memory() -> Result<(), ProtectionError> {
         let label = ProtectionLabel::create(ProtectionLevel::DenyAll)?;
 
-        let mut sekrit = label.with_level(ProtectionLevel::ReadWrite, |alloc| {
+        let mut sekrit: Vec<i32, _> = label.with_level(ProtectionLevel::ReadWrite, |alloc| {
             let mut v = Vec::new_in(alloc);
             // store my top secret value into this vector
             for i in 0..=1024 {
                 v.push(i);
             }
             v
+        });
+
+        // You can pass things in for further mutation
+        label.with_level(ProtectionLevel::ReadWrite, |_| {
+            // Pretend we're decrypting the secret or something
+            for v in sekrit.iter_mut() {
+                *v = v.wrapping_sub(1024);
+            }
         });
 
         // This would segfault
