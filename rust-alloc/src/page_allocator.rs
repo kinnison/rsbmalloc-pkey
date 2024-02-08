@@ -5,6 +5,8 @@ use core::{
 };
 use lazy_static::lazy_static;
 
+use crate::pkey::{pkey_get, pkey_mprotect, pkey_set};
+
 lazy_static! {
     pub static ref PAGE_SIZE: usize = page_size();
 }
@@ -13,10 +15,26 @@ fn page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
 
-#[derive(Default)]
-pub struct PageAllocator {}
+pub struct PageAllocator {
+    pkey: libc::c_int,
+}
 
-pub static PAGE_ALLOCATOR: PageAllocator = PageAllocator {};
+impl PageAllocator {
+    pub(crate) const fn new(pkey: libc::c_int) -> Self {
+        Self { pkey }
+    }
+
+    pub(crate) unsafe fn with_pkey<F, O>(&self, func: F) -> O
+    where
+        F: FnOnce() -> O,
+    {
+        let prot = pkey_get(self.pkey);
+        pkey_set(self.pkey, 0);
+        let ret = func();
+        pkey_set(self.pkey, prot);
+        ret
+    }
+}
 
 unsafe impl GlobalAlloc for PageAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -31,6 +49,12 @@ unsafe impl GlobalAlloc for PageAllocator {
             libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
             -1,
             0,
+        );
+        pkey_mprotect(
+            addr,
+            aligned_layout.size(),
+            libc::PROT_READ | libc::PROT_WRITE,
+            self.pkey,
         );
         addr as _
     }
@@ -74,6 +98,12 @@ unsafe impl GlobalAlloc for PageAllocator {
                 0,
             ) as *mut u8;
             if appended_addr == old_addr_end {
+                pkey_mprotect(
+                    appended_addr as _,
+                    aligned_layout.size() - old_aligned_size.size(),
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    self.pkey,
+                );
                 ptr
             } else {
                 libc::munmap(
@@ -81,8 +111,10 @@ unsafe impl GlobalAlloc for PageAllocator {
                     aligned_layout.size() - old_aligned_size.size(),
                 );
                 let new_addr = self.alloc(aligned_layout);
-
+                let prot = pkey_get(self.pkey);
+                pkey_set(self.pkey, 0);
                 ptr::copy_nonoverlapping(ptr, new_addr, copy_len);
+                pkey_set(self.pkey, prot);
                 libc::munmap(ptr as _, old_aligned_size.size());
                 new_addr
             }
