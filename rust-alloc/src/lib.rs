@@ -1,22 +1,14 @@
-#![cfg_attr(not(any(test, feature = "std")), no_std)]
-
-#[cfg(not(feature = "std"))]
-use core::ptr;
 use core::{
     alloc::{GlobalAlloc, Layout},
     cmp::min,
-    mem,
+    mem, ptr,
     ptr::NonNull,
 };
 
 use page_allocator::PAGE_ALLOCATOR;
 use spin::Mutex;
-//#[cfg(feature = "std")]
-//use thread_cache::ThreadCache;
 
 pub mod page_allocator;
-//#[cfg(feature = "std")]
-//mod thread_cache;
 
 #[cfg(test)]
 #[cfg_attr(test, global_allocator)]
@@ -26,28 +18,19 @@ const RSB_CHUNK_SIZE: usize = 0x10000;
 const MAX_ALIGN: usize = 0x1000;
 
 pub struct RSBMalloc {
-    //#[cfg(not(feature = "std"))]
     bins: Bins,
-    //#[cfg(feature = "std")]
-    //thread_cache: ThreadCache,
 }
 
 impl RSBMalloc {
     pub const fn new() -> Self {
-        Self {
-            //#[cfg(not(feature = "std"))]
-            bins: Bins::new(),
-            //#[cfg(feature = "std")]
-            //thread_cache: ThreadCache::new(),
-        }
+        Self { bins: Bins::new() }
     }
 }
 
-//#[cfg(not(feature = "std"))]
 unsafe impl GlobalAlloc for RSBMalloc {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
         if layout.align() > MAX_ALIGN {
-            return core::ptr::null_mut();
+            return ptr::null_mut();
         }
         let size = layout.pad_to_align().size();
         let bins = &self.bins;
@@ -94,7 +77,7 @@ unsafe impl GlobalAlloc for RSBMalloc {
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         if layout.align() > MAX_ALIGN {
-            return core::ptr::null_mut();
+            return ptr::null_mut();
         }
         if layout.pad_to_align().size() > RSB_CHUNK_SIZE
             && Layout::from_size_align_unchecked(new_size, layout.align())
