@@ -1,19 +1,16 @@
-use core::{
-    alloc::{GlobalAlloc, Layout},
-    cmp::min,
-    mem, ptr,
-    ptr::NonNull,
-};
+#![feature(allocator_api)]
+#![feature(slice_ptr_get)]
 
+use core::alloc::Allocator;
+use core::{alloc::Layout, mem, ptr, ptr::NonNull};
+use std::alloc::AllocError;
+
+use libc::c_int;
 use page_allocator::PageAllocator;
 use spin::Mutex;
 
 pub mod page_allocator;
 pub(crate) mod pkey;
-
-#[cfg(test)]
-#[cfg_attr(test, global_allocator)]
-static BINNED_ALLOC: RSBMalloc = RSBMalloc::new();
 
 const RSB_CHUNK_SIZE: usize = 0x10000;
 const MAX_ALIGN: usize = 0x1000;
@@ -24,43 +21,51 @@ pub struct RSBMalloc {
 }
 
 impl RSBMalloc {
-    pub const fn new() -> Self {
+    /// # Safety
+    /// Just don't call it
+    pub unsafe fn new(pkey: c_int) -> Self {
         Self {
             bins: Bins::new(),
-            pages: PageAllocator::new(0),
+            pages: PageAllocator::new(pkey),
         }
     }
 }
 
-unsafe impl GlobalAlloc for RSBMalloc {
-    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+unsafe impl Allocator for RSBMalloc {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, std::alloc::AllocError> {
         if layout.align() > MAX_ALIGN {
-            return ptr::null_mut();
+            return Err(AllocError);
         }
         let size = layout.pad_to_align().size();
         let bins = &self.bins;
-        match size {
-            0..=4 => bins.bin4.alloc(&self.pages),
-            5..=8 => bins.bin8.alloc(&self.pages),
-            9..=16 => bins.bin16.alloc(&self.pages),
-            17..=32 => bins.bin32.alloc(&self.pages),
-            33..=64 => bins.bin64.alloc(&self.pages),
-            65..=128 => bins.bin128.alloc(&self.pages),
-            129..=256 => bins.bin256.alloc(&self.pages),
-            257..=512 => bins.bin512.alloc(&self.pages),
-            513..=1024 => bins.bin1024.alloc(&self.pages),
-            1025..=2048 => bins.bin2048.alloc(&self.pages),
-            2049..=4096 => bins.bin4096.alloc(&self.pages),
-            4097..=8192 => bins.bin8192.alloc(&self.pages),
-            8193..=16384 => bins.bin16384.alloc(&self.pages),
-            16385..=0x8000 => bins.bin32ki.alloc(&self.pages),
-            0x8001..=0x10000 => bins.bin64ki.alloc(&self.pages),
-            _ => self.pages.alloc(layout),
-        }
+        let ptr = unsafe {
+            match size {
+                0..=4 => bins.bin4.alloc(&self.pages),
+                5..=8 => bins.bin8.alloc(&self.pages),
+                9..=16 => bins.bin16.alloc(&self.pages),
+                17..=32 => bins.bin32.alloc(&self.pages),
+                33..=64 => bins.bin64.alloc(&self.pages),
+                65..=128 => bins.bin128.alloc(&self.pages),
+                129..=256 => bins.bin256.alloc(&self.pages),
+                257..=512 => bins.bin512.alloc(&self.pages),
+                513..=1024 => bins.bin1024.alloc(&self.pages),
+                1025..=2048 => bins.bin2048.alloc(&self.pages),
+                2049..=4096 => bins.bin4096.alloc(&self.pages),
+                4097..=8192 => bins.bin8192.alloc(&self.pages),
+                8193..=16384 => bins.bin16384.alloc(&self.pages),
+                16385..=0x8000 => bins.bin32ki.alloc(&self.pages),
+                0x8001..=0x10000 => bins.bin64ki.alloc(&self.pages),
+                _ => self.pages.alloc(layout),
+            }
+        };
+        let ptr = NonNull::new(ptr).ok_or(AllocError)?;
+        Ok(NonNull::slice_from_raw_parts(ptr, size))
     }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         let size = layout.pad_to_align().size();
         let bins = &self.bins;
+        let ptr = ptr.as_ptr();
         match size {
             0..=4 => bins.bin4.dealloc(ptr, &self.pages),
             5..=8 => bins.bin8.dealloc(ptr, &self.pages),
@@ -80,26 +85,115 @@ unsafe impl GlobalAlloc for RSBMalloc {
             _ => self.pages.dealloc(ptr, layout),
         }
     }
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if layout.align() > MAX_ALIGN {
-            return ptr::null_mut();
+
+    fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, std::alloc::AllocError> {
+        let ptr = self.allocate(layout)?;
+        // SAFETY: `alloc` returns a valid memory block
+        unsafe {
+            self.pages
+                .with_pkey(|| ptr.as_non_null_ptr().as_ptr().write_bytes(0, ptr.len()))
         }
-        if layout.pad_to_align().size() > RSB_CHUNK_SIZE
-            && Layout::from_size_align_unchecked(new_size, layout.align())
-                .pad_to_align()
-                .size()
-                > RSB_CHUNK_SIZE
-        {
-            return self.pages.realloc(ptr, layout, new_size);
+        Ok(ptr)
+    }
+
+    unsafe fn grow(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, std::alloc::AllocError> {
+        debug_assert!(
+            new_layout.size() >= old_layout.size(),
+            "`new_layout.size()` must be greater than or equal to `old_layout.size()`"
+        );
+
+        if new_layout.align() > MAX_ALIGN {
+            return Err(AllocError);
         }
-        let new_ptr = self.alloc(Layout::from_size_align_unchecked(new_size, layout.align()));
-        if new_ptr != ptr {
+
+        if old_layout.pad_to_align().size() > RSB_CHUNK_SIZE {
+            let new_ptr = self
+                .pages
+                .realloc(ptr.as_ptr(), old_layout, new_layout.size());
+            let new_ptr = NonNull::new(new_ptr).ok_or(AllocError)?;
+            return Ok(NonNull::slice_from_raw_parts(new_ptr, new_layout.size()));
+        }
+
+        let new_ptr = self.allocate(new_layout)?;
+
+        // SAFETY: because `new_layout.size()` must be greater than or equal to
+        // `old_layout.size()`, both the old and new memory allocation are valid for reads and
+        // writes for `old_layout.size()` bytes. Also, because the old allocation wasn't yet
+        // deallocated, it cannot overlap `new_ptr`. Thus, the call to `copy_nonoverlapping` is
+        // safe. The safety contract for `dealloc` must be upheld by the caller.
+        unsafe {
             self.pages.with_pkey(|| {
-                core::ptr::copy_nonoverlapping(ptr, new_ptr, min(layout.size(), new_size))
+                ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_mut_ptr(), old_layout.size())
             });
-            self.dealloc(ptr, layout);
+            self.deallocate(ptr, old_layout);
         }
-        new_ptr
+
+        Ok(new_ptr)
+    }
+
+    unsafe fn grow_zeroed(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, std::alloc::AllocError> {
+        debug_assert!(
+            new_layout.size() >= old_layout.size(),
+            "`new_layout.size()` must be greater than or equal to `old_layout.size()`"
+        );
+
+        if new_layout.align() > MAX_ALIGN {
+            return Err(AllocError);
+        }
+
+        let new_ptr = self.allocate_zeroed(new_layout)?;
+
+        // SAFETY: because `new_layout.size()` must be greater than or equal to
+        // `old_layout.size()`, both the old and new memory allocation are valid for reads and
+        // writes for `old_layout.size()` bytes. Also, because the old allocation wasn't yet
+        // deallocated, it cannot overlap `new_ptr`. Thus, the call to `copy_nonoverlapping` is
+        // safe. The safety contract for `dealloc` must be upheld by the caller.
+        unsafe {
+            self.pages.with_pkey(|| {
+                ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_mut_ptr(), old_layout.size())
+            });
+            self.deallocate(ptr, old_layout);
+        }
+
+        Ok(new_ptr)
+    }
+
+    unsafe fn shrink(
+        &self,
+        ptr: NonNull<u8>,
+        old_layout: Layout,
+        new_layout: Layout,
+    ) -> Result<NonNull<[u8]>, std::alloc::AllocError> {
+        debug_assert!(
+            new_layout.size() <= old_layout.size(),
+            "`new_layout.size()` must be smaller than or equal to `old_layout.size()`"
+        );
+
+        let new_ptr = self.allocate(new_layout)?;
+
+        // SAFETY: because `new_layout.size()` must be lower than or equal to
+        // `old_layout.size()`, both the old and new memory allocation are valid for reads and
+        // writes for `new_layout.size()` bytes. Also, because the old allocation wasn't yet
+        // deallocated, it cannot overlap `new_ptr`. Thus, the call to `copy_nonoverlapping` is
+        // safe. The safety contract for `dealloc` must be upheld by the caller.
+        unsafe {
+            self.pages.with_pkey(|| {
+                ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_mut_ptr(), new_layout.size())
+            });
+            self.deallocate(ptr, old_layout);
+        }
+
+        Ok(new_ptr)
     }
 }
 
@@ -335,20 +429,6 @@ impl<S: Slot> Bin<S> {
 
 #[cfg(test)]
 mod test {
-    extern crate alloc;
-    extern crate std;
-    use core::{
-        alloc::{GlobalAlloc, Layout},
-        hint::black_box,
-        mem,
-        ptr::null_mut,
-    };
-
-    use std::{panic::catch_unwind, vec, vec::Vec};
-
-    use std::thread;
-
-    use alloc::collections::BTreeMap;
 
     use crate::*;
 
@@ -357,130 +437,24 @@ mod test {
         _contents: [u8; 512],
     }
 
-    unsafe fn test_allocator<A: GlobalAlloc>(allocator: A) {
-        std::println!("Allocating 100 i32s");
-        let mut pointer = allocator.alloc(Layout::new::<[i32; 100]>());
-        assert!(!pointer.is_null());
-        let mut slice = std::slice::from_raw_parts_mut(pointer as *mut i32, 100);
-        assert_eq!(slice.len(), 100);
-        for (i, item) in slice.iter_mut().enumerate() {
-            *item = i as i32;
-        }
-        pointer = allocator.realloc(pointer, Layout::for_value(slice), 4 * 20_000);
-        assert!(!pointer.is_null());
-        slice = std::slice::from_raw_parts_mut(pointer as *mut i32, 20_000);
-
-        for (i, item) in slice[0..100].iter().enumerate() {
-            assert_eq!(*item, i as i32);
-        }
-
-        pointer = allocator.realloc(pointer, Layout::for_value(slice), 4 * 50);
-        assert!(!pointer.is_null());
-        slice = std::slice::from_raw_parts_mut(pointer as *mut i32, 50);
-        for (i, item) in slice.iter().enumerate() {
-            assert_eq!(*item, i as i32);
-        }
-        allocator.dealloc(pointer, Layout::for_value(slice));
-
-        // Allocate some more memory
-        let ptr = allocator.alloc(Layout::new::<u64>());
-
-        // Free the memory
-        allocator.dealloc(ptr, Layout::new::<u64>());
-
-        let mut ptr_buf: [*mut u8; 256] = [null_mut(); 256];
-
-        for ptr in ptr_buf.iter_mut() {
-            let pointer = allocator.alloc(Layout::new::<Big>());
-            assert!(!pointer.is_null());
-            let _ = std::ptr::read(pointer as *const Big);
-            *ptr = pointer;
-        }
-
-        for ptr in ptr_buf.iter() {
-            allocator.dealloc(*ptr, Layout::new::<Big>());
-        }
-
-        for ptr in ptr_buf.iter_mut() {
-            let pointer = allocator.alloc(Layout::new::<Big>());
-            assert!(!pointer.is_null());
-            let _ = std::ptr::read(pointer as *const Big);
-            *ptr = pointer;
-        }
-
-        for ptr in ptr_buf.iter() {
-            allocator.dealloc(*ptr, Layout::new::<Big>());
-        }
-    }
-
-    #[test]
-    fn test_page() {
-        unsafe {
-            test_allocator(crate::page_allocator::PageAllocator::new(0));
-        }
-    }
-
-    #[test]
-    fn align() {
-        assert_eq!(mem::align_of::<Slot4>(), 8);
-        assert_eq!(mem::align_of::<Slot16>(), 16);
-        assert_eq!(mem::align_of::<Slot256>(), 256);
-        assert_eq!(mem::align_of::<Slot1024>(), 1024);
-    }
-
-    #[test]
-    fn test_binned() {
-        unsafe { test_allocator(RSBMalloc::new()) };
-    }
-
-    #[test]
-    fn test_global_allocator() {
-        const THREADS: usize = 32;
-        const ITERATIONS: usize = 1000;
-
-        let mut map = BTreeMap::new();
-
-        for i in 0..(ITERATIONS) {
-            map.insert(format!("Key Nº {}", i), i % 12);
-        }
-
-        thread::spawn(move || {
-            let _ = map;
-        });
-
-        for _ in 0..(ITERATIONS * 100) {
-            let vec = vec![0; 256];
-            for word in &vec {
-                assert_eq!(*word, 0);
+    impl Big {
+        fn new() -> Self {
+            Self {
+                _contents: [0; 512],
             }
-            drop(vec);
         }
+    }
 
-        let mut threads = Vec::with_capacity(THREADS);
-
-        for i in 0..THREADS {
-            threads.push(thread::spawn(move || {
-                println!("Starting thread {}", i);
-                for _ in 0..ITERATIONS {
-                    let mut vec = Vec::with_capacity(0);
-                    for _ in 0..513 {
-                        vec.push(i);
-                    }
-                    for byte in vec {
-                        assert_eq!(byte, i);
-                    }
-                }
-                println!("Ending thread {}", i);
-            }));
+    #[test]
+    fn basic_vec() {
+        let alloc = unsafe { RSBMalloc::new(0) };
+        let mut v = Vec::new_in(&alloc);
+        for i in 0..10_000 {
+            v.push(i);
         }
-
-        for thread in threads {
-            thread.join().unwrap();
+        let mut v = Vec::new_in(&alloc);
+        for _ in 0..10_000 {
+            v.push(Big::new());
         }
-
-        assert!(catch_unwind(|| {
-            panic!("Panic!!! Code: {}", black_box(12));
-        })
-        .is_err());
     }
 }

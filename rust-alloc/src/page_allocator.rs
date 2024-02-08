@@ -1,5 +1,5 @@
 use core::{
-    alloc::{GlobalAlloc, Layout},
+    alloc::Layout,
     cmp::{max, min},
     ptr,
 };
@@ -34,10 +34,8 @@ impl PageAllocator {
         pkey_set(self.pkey, prot);
         ret
     }
-}
 
-unsafe impl GlobalAlloc for PageAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+    pub(crate) unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let aligned_layout = match layout.align_to(max(layout.align(), *PAGE_SIZE)) {
             Ok(l) => l.pad_to_align(),
             Err(_) => return ptr::null_mut(),
@@ -60,13 +58,13 @@ unsafe impl GlobalAlloc for PageAllocator {
     }
 
     /// Silently fails on errors
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+    pub(crate) unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         if let Ok(aligned) = layout.align_to(max(layout.align(), *PAGE_SIZE)) {
             libc::munmap(ptr as _, aligned.pad_to_align().size());
         }
     }
 
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+    pub(crate) unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let p_size = max(layout.align(), *PAGE_SIZE);
         let old_aligned_size = match layout.align_to(p_size) {
             Ok(l) => l.pad_to_align(),
