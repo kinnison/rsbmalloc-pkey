@@ -72,21 +72,21 @@ unsafe impl Allocator for RSBMalloc {
         let bins = &self.bins;
         let ptr = ptr.as_ptr();
         match size {
-            0..=4 => bins.bin4.dealloc(ptr, &self.pages),
-            5..=8 => bins.bin8.dealloc(ptr, &self.pages),
-            9..=16 => bins.bin16.dealloc(ptr, &self.pages),
-            17..=32 => bins.bin32.dealloc(ptr, &self.pages),
-            33..=64 => bins.bin64.dealloc(ptr, &self.pages),
-            65..=128 => bins.bin128.dealloc(ptr, &self.pages),
-            129..=256 => bins.bin256.dealloc(ptr, &self.pages),
-            257..=512 => bins.bin512.dealloc(ptr, &self.pages),
-            513..=1024 => bins.bin1024.dealloc(ptr, &self.pages),
-            1025..=2048 => bins.bin2048.dealloc(ptr, &self.pages),
-            2049..=4096 => bins.bin4096.dealloc(ptr, &self.pages),
-            4097..=8192 => bins.bin8192.dealloc(ptr, &self.pages),
-            8193..=16384 => bins.bin16384.dealloc(ptr, &self.pages),
-            16385..=0x8000 => bins.bin32ki.dealloc(ptr, &self.pages),
-            0x8001..=0x10000 => bins.bin64ki.dealloc(ptr, &self.pages),
+            0..=4 => bins.bin4.dealloc(ptr),
+            5..=8 => bins.bin8.dealloc(ptr),
+            9..=16 => bins.bin16.dealloc(ptr),
+            17..=32 => bins.bin32.dealloc(ptr),
+            33..=64 => bins.bin64.dealloc(ptr),
+            65..=128 => bins.bin128.dealloc(ptr),
+            129..=256 => bins.bin256.dealloc(ptr),
+            257..=512 => bins.bin512.dealloc(ptr),
+            513..=1024 => bins.bin1024.dealloc(ptr),
+            1025..=2048 => bins.bin2048.dealloc(ptr),
+            2049..=4096 => bins.bin4096.dealloc(ptr),
+            4097..=8192 => bins.bin8192.dealloc(ptr),
+            8193..=16384 => bins.bin16384.dealloc(ptr),
+            16385..=0x8000 => bins.bin32ki.dealloc(ptr),
+            0x8001..=0x10000 => bins.bin64ki.dealloc(ptr),
             _ => self.pages.dealloc(ptr, layout),
         }
     }
@@ -95,8 +95,7 @@ unsafe impl Allocator for RSBMalloc {
         let ptr = self.allocate(layout)?;
         // SAFETY: `alloc` returns a valid memory block
         unsafe {
-            self.pages
-                .with_pkey(|| ptr.as_non_null_ptr().as_ptr().write_bytes(0, ptr.len()))
+            ptr.as_non_null_ptr().as_ptr().write_bytes(0, ptr.len());
         }
         Ok(ptr)
     }
@@ -132,9 +131,7 @@ unsafe impl Allocator for RSBMalloc {
         // deallocated, it cannot overlap `new_ptr`. Thus, the call to `copy_nonoverlapping` is
         // safe. The safety contract for `dealloc` must be upheld by the caller.
         unsafe {
-            self.pages.with_pkey(|| {
-                ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_mut_ptr(), old_layout.size())
-            });
+            ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_mut_ptr(), old_layout.size());
             self.deallocate(ptr, old_layout);
         }
 
@@ -164,9 +161,7 @@ unsafe impl Allocator for RSBMalloc {
         // deallocated, it cannot overlap `new_ptr`. Thus, the call to `copy_nonoverlapping` is
         // safe. The safety contract for `dealloc` must be upheld by the caller.
         unsafe {
-            self.pages.with_pkey(|| {
-                ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_mut_ptr(), old_layout.size())
-            });
+            ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_mut_ptr(), old_layout.size());
             self.deallocate(ptr, old_layout);
         }
 
@@ -192,9 +187,7 @@ unsafe impl Allocator for RSBMalloc {
         // deallocated, it cannot overlap `new_ptr`. Thus, the call to `copy_nonoverlapping` is
         // safe. The safety contract for `dealloc` must be upheld by the caller.
         unsafe {
-            self.pages.with_pkey(|| {
-                ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_mut_ptr(), new_layout.size())
-            });
+            ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_mut_ptr(), new_layout.size());
             self.deallocate(ptr, old_layout);
         }
 
@@ -421,26 +414,22 @@ impl<S: Slot> Bin<S> {
 
     /// Allocates a pointer with size SIZE
     unsafe fn alloc(&self, pages: &PageAllocator) -> *mut u8 {
-        pages.with_pkey(|| {
-            let mut free_head = self.free_head.lock();
-            if free_head.exists() {
-                let buf = free_head.get_buf();
-                (*free_head) = free_head.get_next().into();
-                buf
-            } else {
-                drop(free_head);
-                (*self.add_one(pages)).buf()
-            }
-        })
+        let mut free_head = self.free_head.lock();
+        if free_head.exists() {
+            let buf = free_head.get_buf();
+            (*free_head) = free_head.get_next().into();
+            buf
+        } else {
+            drop(free_head);
+            (*self.add_one(pages)).buf()
+        }
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, pages: &PageAllocator) {
-        pages.with_pkey(|| {
-            let slot_ptr = ptr as *mut S;
-            let mut free_head = self.free_head.lock();
-            (*slot_ptr).set_next((*free_head).option_nn());
-            (*free_head) = FreeList::from(slot_ptr);
-        })
+    unsafe fn dealloc(&self, ptr: *mut u8) {
+        let slot_ptr = ptr as *mut S;
+        let mut free_head = self.free_head.lock();
+        (*slot_ptr).set_next((*free_head).option_nn());
+        (*free_head) = FreeList::from(slot_ptr);
     }
 
     fn new() -> Self {

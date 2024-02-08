@@ -107,7 +107,9 @@ unsafe impl Allocator for ProtectionLabel {
     }
 
     unsafe fn deallocate(&self, ptr: std::ptr::NonNull<u8>, layout: std::alloc::Layout) {
-        self.inner.alloc.deallocate(ptr, layout)
+        self.with_level(ProtectionLevel::ReadWrite, |_| {
+            self.inner.alloc.deallocate(ptr, layout)
+        })
     }
 
     fn allocate_zeroed(
@@ -150,8 +152,8 @@ mod test {
     use super::*;
 
     #[test]
-    fn basic_labelled_memory() {
-        let label = ProtectionLabel::create(ProtectionLevel::DenyAll).unwrap();
+    fn basic_labelled_memory() -> Result<(), ProtectionError> {
+        let label = ProtectionLabel::create(ProtectionLevel::DenyAll)?;
 
         let mut sekrit = label.with_level(ProtectionLevel::ReadWrite, |alloc| {
             let mut v = Vec::new_in(alloc);
@@ -168,5 +170,11 @@ mod test {
         //label.with_level(ProtectionLevel::ReadOnly, |_| sekrit.push(77));
         // But this doesn't
         label.with_level(ProtectionLevel::ReadOnly, |_| println!("{}", sekrit[0]));
+
+        // Note it's always safe to drop things in protected allocations because
+        // the deallocate method will elevate to readwrite internally.
+        // It's *NOT* always safe to do anything else with that value though
+
+        Ok(())
     }
 }
