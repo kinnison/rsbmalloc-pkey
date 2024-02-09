@@ -153,9 +153,10 @@ mod test {
 
     #[test]
     fn basic_labelled_memory() -> Result<(), ProtectionError> {
-        let label = ProtectionLabel::create(ProtectionLevel::DenyAll)?;
+        use ProtectionLevel::*;
+        let label = ProtectionLabel::create(DenyAll)?;
 
-        let mut sekrit: Vec<i32, _> = label.with_level(ProtectionLevel::ReadWrite, |alloc| {
+        let mut sekrit: Vec<i32, _> = label.with_level(ReadWrite, |alloc| {
             let mut v = Vec::new_in(alloc);
             // store my top secret value into this vector
             for i in 0..=1024 {
@@ -165,7 +166,7 @@ mod test {
         });
 
         // You can pass things in for further mutation
-        label.with_level(ProtectionLevel::ReadWrite, |_| {
+        label.with_level(ReadWrite, |_| {
             // Pretend we're decrypting the secret or something
             for v in sekrit.iter_mut() {
                 *v = v.wrapping_sub(1024);
@@ -175,9 +176,9 @@ mod test {
         // This would segfault
         //println!("{}", sekrit[0]);
         // As would this
-        //label.with_level(ProtectionLevel::ReadOnly, |_| sekrit.push(77));
+        //label.with_level(ReadOnly, |_| sekrit.push(77));
         // But this doesn't
-        label.with_level(ProtectionLevel::ReadOnly, |_| println!("{}", sekrit[0]));
+        label.with_level(ReadOnly, |_| println!("{}", sekrit[0]));
 
         // Note it's always safe to drop things in protected allocations because
         // the deallocate method will elevate to readwrite internally.
