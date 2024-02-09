@@ -248,3 +248,14 @@ class: impact
 ???
 
 Obvious any-questionsness
+
+---
+
+class: middle
+title: Bonus round
+
+## Can we turn those segfaults into panics?
+
+???
+
+Well, _maybe_
