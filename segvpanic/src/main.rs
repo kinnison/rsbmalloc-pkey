@@ -5,10 +5,11 @@ use std::{
     ptr::{null, null_mut},
 };
 
+#[derive(Debug)]
 struct SegmentationViolation;
 
 #[inline(never)]
-fn actual_panic() {
+fn actual_panic() -> ! {
     panic_any(SegmentationViolation)
 }
 
@@ -17,7 +18,6 @@ fn segvpanic() -> ! {
     // We can panic here because the signal has "returned"
     // so unwinding should be possible
     actual_panic();
-    loop {}
 }
 
 unsafe extern "C" fn sigaction_handler(
@@ -58,5 +58,14 @@ fn main() {
     println!("Hello, let's try and segfault ourselves...");
     unsafe { setup_signals() }
     println!("We've set up our signal handler, now let's segfault");
-    std::hint::black_box(danger_func());
+    match std::panic::catch_unwind(|| std::hint::black_box(danger_func())) {
+        Ok(v) => println!("WTF? {v}"),
+        Err(e) => {
+            if let Some(e) = e.downcast_ref::<SegmentationViolation>() {
+                eprintln!("Caught the failure: {e:?}");
+            } else {
+                eprintln!("Unknown failure: {e:?}");
+            }
+        }
+    }
 }
